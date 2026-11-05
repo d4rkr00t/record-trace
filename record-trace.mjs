@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { createWriteStream, globSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 
@@ -86,8 +87,9 @@ const OPTIONS = {
   help: { type: "boolean", short: "h" },
 };
 const TOGGLES = {
-  s: ["selector-stats", "CSS selector stats"],
-  m: ["source-maps", "Embed source maps"],
+  s: ["selector-stats", "selector stats"],
+  m: ["source-maps", "source maps"],
+  t: ["throttle", "4x CPU", "4"],
 };
 
 const PORT = process.env.PORT ?? 9222;
@@ -186,7 +188,7 @@ async function launchOrAttach(chromeArgs) {
   );
   chrome.on("exit", (code) => {
     console.log(`\nChrome exited (${code})`);
-    process.exit(0);
+    process.exit(code === 0 ? 0 : 1);
   });
   process.on("exit", () => chrome.kill());
   for (let i = 0; !(await isUp()); i++) {
@@ -494,19 +496,35 @@ if (opts.scenario) {
       }),
   );
 } else {
+  rl.removeAllListeners("close");
+  rl.close();
+  emitKeypressEvents(process.stdin);
+  process.stdin.setRawMode?.(true);
+  process.stdin.resume();
+  const key = () =>
+    new Promise((r) =>
+      process.stdin.once("keypress", (str, k = {}) => {
+        if (k.ctrl && k.name === "c") process.exit(0);
+        r(k.name ?? str);
+      }),
+    );
+  const isEnter = (k) => k === "return" || k === "enter" || k === "space";
   for (;;) {
-    for (const [key, [name, label]] of Object.entries(TOGGLES)) {
-      console.log(`[${key}] ${label}: ${opts[name] ? "ON" : "off"}`);
+    const flags = Object.entries(TOGGLES)
+      .map(([k, [name, label]]) => `[${k}] ${label} ${opts[name] ? "\x1b[32m●\x1b[0m" : "○"}`)
+      .join("  ");
+    process.stdout.write(`\r\x1b[2K${flags}   ⏎ record  q quit`);
+    const k = await key();
+    if (k === "q") process.exit(0);
+    if (TOGGLES[k]) {
+      const [name, , on = true] = TOGGLES[k];
+      opts[name] = opts[name] ? undefined : on;
     }
-    const key = (await rl.question("Enter to START, letter+Enter to toggle (Ctrl+C to quit)… "))
-      .trim()
-      .toLowerCase();
-    if (TOGGLES[key]) {
-      const [name] = TOGGLES[key];
-      opts[name] = !opts[name];
-      continue;
-    }
-    await record(() => rl.question("Recording. Enter to STOP… "));
+    if (!isEnter(k)) continue;
+    console.log("\n\x1b[31m●\x1b[0m Recording… ⏎ to stop");
+    await record(async () => {
+      while (!isEnter(await key()));
+    });
   }
 }
 process.exit(0);

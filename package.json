@@ -1,6 +1,6 @@
 {
   "name": "record-trace",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Record Chrome DevTools Performance traces over CDP, streamed to disk",
   "type": "module",
   "bin": {
@@ -14,7 +14,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test \"test/*.test.mjs\""
   },
   "keywords": [
     "chrome",

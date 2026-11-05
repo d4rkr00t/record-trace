@@ -51,7 +51,7 @@ npx record-trace --headless --scenario ./type-text.mjs --lean           # script
 | `PORT`    | `9222`                                                                    |
 | `PROFILE` | `~/.cdp-trace-chrome` (the user data dir, so logins persist between runs) |
 
-In interactive mode, type `s` or `m` and press Enter to toggle selector stats or source maps before each recording.
+In interactive mode, press `s`, `m` or `t` to toggle selector stats, source maps or 4x CPU throttling; Enter starts/stops recording, `q` quits.
 
 ### Scenarios
 
