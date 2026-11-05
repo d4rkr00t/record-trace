@@ -201,29 +201,47 @@ async function launchOrAttach(chromeArgs) {
   }
 }
 
-/**
- * Choose the tab to record: matched by `tab`, else asked interactively, else the first one.
- *
- * @param {string | undefined} tab case-insensitive substring of the tab's URL or title
- * @param {import("node:readline/promises").Interface | undefined} rl prompt; absent in non-interactive runs
- * @returns {Promise<{ title: string, url: string, webSocketDebuggerUrl: string }>}
- */
-async function pickPage(tab, rl) {
+const label = (p) => `${p.title} — ${p.url}`;
+
+/** @returns {Promise<{ title: string, url: string, webSocketDebuggerUrl: string }[]>} */
+async function listPages() {
   const all = await (await fetch(`${BASE}/json/list`)).json();
   const pages = all.filter((t) => t.type === "page" && !t.url.startsWith("devtools://"));
   if (!pages.length) fail("No open tabs");
-  const label = (p) => `${p.title} — ${p.url}`;
-  if (tab) {
-    const needle = tab.toLowerCase();
-    const match = pages.find((p) => `${p.url} ${p.title}`.toLowerCase().includes(needle));
-    return (
-      match ??
-      fail(`No tab matches "${tab}". Open tabs:\n${pages.map((p) => `  ${label(p)}`).join("\n")}`)
-    );
+  return pages;
+}
+
+/**
+ * The tab whose URL or title contains `tab` (case-insensitive), else the first tab.
+ *
+ * @param {string | undefined} tab
+ */
+async function findPage(tab) {
+  const pages = await listPages();
+  if (!tab) return pages[0];
+  const needle = tab.toLowerCase();
+  return (
+    pages.find((p) => `${p.url} ${p.title}`.toLowerCase().includes(needle)) ??
+    fail(`No tab matches "${tab}". Open tabs:\n${pages.map((p) => `  ${label(p)}`).join("\n")}`)
+  );
+}
+
+/** Wait for Enter, then let the user pick a tab if more than one is open. */
+async function askPage() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const exit = () => process.exit(0);
+  rl.on("SIGINT", exit);
+  rl.on("close", exit);
+  await rl.question("Chrome is up. Open your page, then press Enter… ");
+  const pages = await listPages();
+  let page = pages[0];
+  if (pages.length > 1) {
+    pages.forEach((p, i) => console.log(`  [${i + 1}] ${label(p)}`));
+    page = pages[Number(await rl.question("Tab number: ")) - 1] ?? page;
   }
-  if (!rl || pages.length === 1) return pages[0];
-  pages.forEach((p, i) => console.log(`  [${i + 1}] ${label(p)}`));
-  return pages[Number(await rl.question("Tab number: ")) - 1] ?? pages[0];
+  rl.off("close", exit);
+  rl.close();
+  return page;
 }
 
 /**
@@ -453,22 +471,62 @@ async function record(stopped) {
   await save(stream, file, maps);
 }
 
+/** @param {string | undefined} seconds stop after this long, if set */
+const untilSignal = (seconds) =>
+  new Promise((done) => {
+    process.once("SIGINT", done);
+    process.once("SIGTERM", done);
+    if (seconds) setTimeout(done, Number(seconds) * 1000);
+  });
+
+/** @returns {Promise<string>} name of the next key pressed; exits on Ctrl+C */
+const readKey = () =>
+  new Promise((r) =>
+    process.stdin.once("keypress", (str, k = {}) => {
+      if (k.ctrl && k.name === "c") process.exit(0);
+      r(k.name ?? str);
+    }),
+  );
+const isEnter = (k) => k === "return" || k === "enter" || k === "space";
+
+function renderToggles() {
+  const flags = Object.entries(TOGGLES)
+    .map(([key, [name, label]]) => `[${key}] ${label} ${opts[name] ? "\x1b[32m●\x1b[0m" : "○"}`)
+    .join("  ");
+  process.stdout.write(`\r\x1b[2K${flags}   ⏎ record  q quit`);
+}
+
+/** Toggle options with their keys; Enter starts a recording, Enter again stops it. */
+async function recordLoop() {
+  emitKeypressEvents(process.stdin);
+  process.stdin.setRawMode?.(true);
+  process.stdin.resume();
+  for (;;) {
+    renderToggles();
+    const key = await readKey();
+    if (key === "q") return;
+    if (TOGGLES[key]) {
+      const [name, , on = true] = TOGGLES[key];
+      opts[name] = opts[name] ? undefined : on;
+    } else if (isEnter(key)) {
+      console.log("\n\x1b[31m●\x1b[0m Recording… ⏎ to stop");
+      await record(async () => {
+        while (!isEnter(await readKey()));
+      });
+    }
+  }
+}
+
 const { opts, chromeArgs } = parseCli();
 if (opts.help) {
   console.log(USAGE);
   process.exit(0);
 }
-const auto = ["tab", "seconds", "url", "scenario"].some((k) => opts[k] !== undefined);
+const interactive = !["tab", "seconds", "url", "scenario"].some((k) => opts[k] !== undefined);
 
 await launchOrAttach(chromeArgs);
-
-const rl = auto ? undefined : createInterface({ input: process.stdin, output: process.stdout });
-rl?.on("SIGINT", () => process.exit(0));
-rl?.on("close", () => process.exit(0));
-await rl?.question("Chrome is up. Open your page, then press Enter… ");
-
-const page = await pickPage(opts.tab, rl);
-console.log(`Using: ${page.title} — ${page.url}`);
+const page = interactive ? await askPage() : await findPage(opts.tab);
+console.log(`Using: ${label(page)}`);
 const cdp = await connect(page.webSocketDebuggerUrl);
 
 if (opts["init-script"]) {
@@ -481,50 +539,14 @@ if (opts.url) {
   await loaded;
 }
 
-if (opts.scenario) {
+if (interactive) {
+  await recordLoop();
+} else if (opts.scenario) {
   const { default: scenario } = await import(resolve(opts.scenario));
   console.log(`Recording scenario ${opts.scenario}…`);
   await record(() => scenario({ send: cdp.send, waitFor: cdp.waitFor }));
-} else if (auto) {
-  console.log(`Recording${opts.seconds ? ` for ${opts.seconds}s` : ""}… (SIGINT/SIGTERM to stop)`);
-  await record(
-    () =>
-      new Promise((done) => {
-        process.once("SIGINT", done);
-        process.once("SIGTERM", done);
-        if (opts.seconds) setTimeout(done, Number(opts.seconds) * 1000);
-      }),
-  );
 } else {
-  rl.removeAllListeners("close");
-  rl.close();
-  emitKeypressEvents(process.stdin);
-  process.stdin.setRawMode?.(true);
-  process.stdin.resume();
-  const key = () =>
-    new Promise((r) =>
-      process.stdin.once("keypress", (str, k = {}) => {
-        if (k.ctrl && k.name === "c") process.exit(0);
-        r(k.name ?? str);
-      }),
-    );
-  const isEnter = (k) => k === "return" || k === "enter" || k === "space";
-  for (;;) {
-    const flags = Object.entries(TOGGLES)
-      .map(([k, [name, label]]) => `[${k}] ${label} ${opts[name] ? "\x1b[32m●\x1b[0m" : "○"}`)
-      .join("  ");
-    process.stdout.write(`\r\x1b[2K${flags}   ⏎ record  q quit`);
-    const k = await key();
-    if (k === "q") process.exit(0);
-    if (TOGGLES[k]) {
-      const [name, , on = true] = TOGGLES[k];
-      opts[name] = opts[name] ? undefined : on;
-    }
-    if (!isEnter(k)) continue;
-    console.log("\n\x1b[31m●\x1b[0m Recording… ⏎ to stop");
-    await record(async () => {
-      while (!isEnter(await key()));
-    });
-  }
+  console.log(`Recording${opts.seconds ? ` for ${opts.seconds}s` : ""}… (SIGINT/SIGTERM to stop)`);
+  await record(() => untilSignal(opts.seconds));
 }
 process.exit(0);
