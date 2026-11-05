@@ -74,6 +74,22 @@ export default async ({ send, waitFor }) => {
 
 If Chrome is already listening on `PORT`, record-trace attaches to it and leaves it running when it exits. That means you can use it alongside [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) with `--browserUrl http://127.0.0.1:9222`.
 
+## Agent skill
+
+The package includes a skill that teaches coding agents to record traces with `record-trace`.
+
+Claude Code:
+
+```
+/plugin install record-trace --marketplace d4rkr00t/record-trace
+```
+
+Other agents: link the skill from the installed package into the agent's skills directory, so it stays in sync with the CLI version:
+
+```sh
+ln -s "$(npm root -g)/record-trace/skills/record-trace" ~/.agents/skills/record-trace
+```
+
 ## Limits
 
 - DevTools reads the whole trace file into a single string, which V8 caps at about 536 MB, so larger files won't load. record-trace warns when this happens. Record a shorter window, or use `--lean`.

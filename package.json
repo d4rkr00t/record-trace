@@ -7,7 +7,8 @@
     "record-trace": "record-trace.mjs"
   },
   "files": [
-    "record-trace.mjs"
+    "record-trace.mjs",
+    "skills"
   ],
   "engines": {
     "node": ">=22"
@@ -22,5 +23,9 @@
     "performance",
     "cdp"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  }
 }

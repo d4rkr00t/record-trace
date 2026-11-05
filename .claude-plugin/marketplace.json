@@ -1,0 +1,14 @@
+{
+  "name": "record-trace",
+  "description": "Chrome DevTools Performance trace recording for agents",
+  "owner": {
+    "name": "Stanislav Sysoev"
+  },
+  "plugins": [
+    {
+      "name": "record-trace",
+      "source": "./",
+      "description": "Record Chrome DevTools Performance traces with the record-trace CLI"
+    }
+  ]
+}

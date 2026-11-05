@@ -1,0 +1,7 @@
+{
+  "name": "record-trace",
+  "description": "Record Chrome DevTools Performance traces with the record-trace CLI",
+  "author": { "name": "Stanislav Sysoev" },
+  "repository": "https://github.com/d4rkr00t/record-trace",
+  "license": "MIT"
+}
