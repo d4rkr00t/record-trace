@@ -3,10 +3,24 @@
   "version": "0.1.0",
   "description": "Record Chrome DevTools Performance traces over CDP, streamed to disk",
   "type": "module",
-  "bin": { "record-trace": "record-trace.mjs" },
-  "files": ["record-trace.mjs"],
-  "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test" },
-  "keywords": ["chrome", "devtools", "trace", "performance", "cdp"],
+  "bin": {
+    "record-trace": "record-trace.mjs"
+  },
+  "files": [
+    "record-trace.mjs"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "chrome",
+    "devtools",
+    "trace",
+    "performance",
+    "cdp"
+  ],
   "license": "MIT"
 }

@@ -15,8 +15,6 @@ Install Chrome for Testing once:
 mkdir -p ~/.cache/puppeteer && cd ~/.cache/puppeteer && npx -y @puppeteer/browsers install chrome@canary
 ```
 
-Chrome for Testing is used because managed (enterprise) Chrome installs often block remote debugging through the `RemoteDebuggingAllowed` policy. Set `CHROME=/path/to/chrome` to use a different binary.
-
 ## Usage
 
 ```sh
@@ -33,24 +31,24 @@ npx record-trace --url https://example.com --throttle 4 --out load.json   # page
 npx record-trace --headless --scenario ./type-text.mjs --lean           # scripted interaction
 ```
 
-| Option | |
-|---|---|
-| `--tab <text>` | Record the tab whose URL or title contains `text` (default: the first tab) |
-| `--seconds <n>` | Stop after `n` seconds (otherwise stop on SIGINT/SIGTERM) |
-| `--url <url>` | Navigate the tab and wait for load before recording |
-| `--scenario <file>` | Run a CDP script while recording; recording stops when it resolves (see below) |
-| `--init-script <js>` | Run in every frame before page scripts (`Page.addScriptToEvaluateOnNewDocument`) |
-| `--throttle <n>` | Throttle the CPU by `n`× while recording |
-| `--source-maps` | Embed source maps into the trace metadata (fetched with the page's cookies) |
-| `--selector-stats` | Include CSS selector stats |
-| `--lean` | Skip script sources and screenshots, for a much smaller trace. Metrics and the CPU profile are unaffected. |
-| `--out <file>` | Output path |
-| anything else | Passed to Chrome, e.g. `--headless` |
+| Option               |                                                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `--tab <text>`       | Record the tab whose URL or title contains `text` (default: the first tab)                                 |
+| `--seconds <n>`      | Stop after `n` seconds (otherwise stop on SIGINT/SIGTERM)                                                  |
+| `--url <url>`        | Navigate the tab and wait for load before recording                                                        |
+| `--scenario <file>`  | Run a CDP script while recording; recording stops when it resolves (see below)                             |
+| `--init-script <js>` | Run in every frame before page scripts (`Page.addScriptToEvaluateOnNewDocument`)                           |
+| `--throttle <n>`     | Throttle the CPU by `n`× while recording                                                                   |
+| `--source-maps`      | Embed source maps into the trace metadata (fetched with the page's cookies)                                |
+| `--selector-stats`   | Include CSS selector stats                                                                                 |
+| `--lean`             | Skip script sources and screenshots, for a much smaller trace. Metrics and the CPU profile are unaffected. |
+| `--out <file>`       | Output path                                                                                                |
+| anything else        | Passed to Chrome, e.g. `--headless`                                                                        |
 
-| Env | Default |
-|---|---|
-| `CHROME` | Newest Chrome for Testing in `~/.cache/puppeteer` |
-| `PORT` | `9222` |
+| Env       | Default                                                                   |
+| --------- | ------------------------------------------------------------------------- |
+| `CHROME`  | Newest Chrome for Testing in `~/.cache/puppeteer`                         |
+| `PORT`    | `9222`                                                                    |
 | `PROFILE` | `~/.cdp-trace-chrome` (the user data dir, so logins persist between runs) |
 
 In interactive mode, type `s` or `m` and press Enter to toggle selector stats or source maps before each recording.
@@ -62,11 +60,11 @@ A scenario is a module that drives the page over the [Chrome DevTools Protocol](
 ```js
 // type-text.mjs
 export default async ({ send, waitFor }) => {
-  await send('Runtime.evaluate', { expression: 'document.querySelector("textarea").focus()' });
-  for (const ch of 'hello') {
-    await send('Input.dispatchKeyEvent', { type: 'char', text: ch });
+  await send("Runtime.evaluate", { expression: 'document.querySelector("textarea").focus()' });
+  for (const ch of "hello") {
+    await send("Input.dispatchKeyEvent", { type: "char", text: ch });
   }
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000));
 };
 ```
 

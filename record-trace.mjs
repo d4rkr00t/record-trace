@@ -94,18 +94,36 @@ const PORT = process.env.PORT ?? 9222;
 const BASE = `http://127.0.0.1:${PORT}`;
 const PROFILE = process.env.PROFILE ?? join(homedir(), ".cdp-trace-chrome");
 
+/**
+ * Print an error and exit with code 1.
+ *
+ * @param {string} message
+ * @returns {never}
+ */
 const fail = (message) => {
   console.error(message);
   process.exit(1);
 };
+
+/** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Whether a Chrome remote debugging endpoint answers on PORT.
+ *
+ * @returns {Promise<boolean>}
+ */
 const isUp = () =>
   fetch(`${BASE}/json/version`).then(
     (r) => r.ok,
     () => false,
   );
 
-// Own options go to opts; every other token is passed through to Chrome.
+/**
+ * Parse argv. Own options go to `opts`; every other token is passed through to Chrome.
+ * Exits if a string option has no value.
+ * @returns {{ opts: Record<string, string | boolean | undefined>, chromeArgs: string[] }}
+ */
 function parseCli() {
   const { values, tokens } = parseArgs({
     options: OPTIONS,
@@ -127,6 +145,11 @@ function parseCli() {
   return { opts: values, chromeArgs };
 }
 
+/**
+ * Resolve the Chrome binary: `CHROME` env, else the newest Chrome for Testing in ~/.cache/puppeteer.
+ *
+ * @returns {string | undefined}
+ */
 function findChrome() {
   if (process.env.CHROME) return process.env.CHROME;
   const patterns = [
@@ -137,6 +160,12 @@ function findChrome() {
   return found.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
 }
 
+/**
+ * Attach to Chrome already listening on PORT, or spawn one and wait until it is up.
+ * A spawned Chrome is killed when this process exits, and this process exits when Chrome does.
+ *
+ * @param {string[]} chromeArgs extra flags for a spawned Chrome
+ */
 async function launchOrAttach(chromeArgs) {
   if (await isUp()) {
     console.log(`Attached to Chrome already running on port ${PORT} (left running on exit)`);
@@ -170,6 +199,13 @@ async function launchOrAttach(chromeArgs) {
   }
 }
 
+/**
+ * Choose the tab to record: matched by `tab`, else asked interactively, else the first one.
+ *
+ * @param {string | undefined} tab case-insensitive substring of the tab's URL or title
+ * @param {import("node:readline/promises").Interface | undefined} rl prompt; absent in non-interactive runs
+ * @returns {Promise<{ title: string, url: string, webSocketDebuggerUrl: string }>}
+ */
 async function pickPage(tab, rl) {
   const all = await (await fetch(`${BASE}/json/list`)).json();
   const pages = all.filter((t) => t.type === "page" && !t.url.startsWith("devtools://"));
@@ -188,7 +224,18 @@ async function pickPage(tab, rl) {
   return pages[Number(await rl.question("Tab number: ")) - 1] ?? pages[0];
 }
 
-// Minimal CDP client: one listener per event name, which is all this script needs.
+/**
+ * Minimal CDP client over the tab's WebSocket. Keeps one listener per event name,
+ * which is all this script needs. Exits if the connection closes.
+ *
+ * @param {string} wsUrl
+ * @returns {Promise<{
+ *   send: (method: string, params?: object) => Promise<any>,
+ *   on: (method: string, fn: (params: any) => void) => () => void,
+ *   waitFor: (method: string) => Promise<any>,
+ * }>} `send` resolves with the command result; `on` returns an unsubscribe function;
+ *   `waitFor` resolves with the params of the next matching event.
+ */
 async function connect(wsUrl) {
   const ws = new WebSocket(wsUrl);
   await new Promise((resolve, reject) => {
@@ -228,8 +275,14 @@ async function connect(wsUrl) {
   return { send, on, waitFor };
 }
 
+/**
+ * Read a CDP IO stream to the end in 1 MB chunks, then close it.
+ *
+ * @param {string} handle
+ * @param {(chunk: Buffer) => unknown} onChunk awaited before the next read
+ */
 async function readStream(handle, onChunk) {
-  for (let eof = false; !eof; ) {
+  for (let eof = false; !eof;) {
     const res = await cdp.send("IO.read", { handle, size: 1 << 20 });
     await onChunk(Buffer.from(res.data, res.base64Encoded ? "base64" : "utf8"));
     eof = res.eof;
@@ -237,12 +290,23 @@ async function readStream(handle, onChunk) {
   await cdp.send("IO.close", { handle });
 }
 
+/**
+ * Write to a stream, waiting for `drain` when its buffer is full.
+ *
+ * @param {import("node:fs").WriteStream} out
+ * @param {string | Buffer} chunk
+ */
 async function write(out, chunk) {
   if (!out.write(chunk)) await once(out, "drain");
 }
 
-// Source map URL -> script URL, resolved the way DevTools matches them when loading a trace.
-// Debugger is enabled only after recording, so it adds no overhead to the trace.
+/**
+ * Collect the page's external source maps. Debugger is enabled only after recording,
+ * so it adds no overhead to the trace.
+ *
+ * @returns {Promise<Map<string, string>>} source map URL -> script URL, resolved the way
+ *   DevTools matches them when loading a trace
+ */
 async function listSourceMaps() {
   const maps = new Map();
   const off = cdp.on("Debugger.scriptParsed", ({ url, sourceMapURL }) => {
@@ -263,7 +327,13 @@ async function listSourceMaps() {
   return maps;
 }
 
-// Fetched through the browser so cookies/auth apply, same as DevTools does.
+/**
+ * Fetch each source map through the browser (so cookies/auth apply, as in DevTools) and
+ * write them as comma-separated `{ url, sourceMapUrl, sourceMap }` entries. Failures are skipped.
+ *
+ * @param {import("node:fs").WriteStream} out
+ * @param {Map<string, string>} maps from {@link listSourceMaps}
+ */
 async function writeSourceMaps(out, maps) {
   const { frameTree } = await cdp.send("Page.getFrameTree");
   let written = 0;
@@ -296,8 +366,15 @@ async function writeSourceMaps(out, maps) {
   console.log(`\rEmbedded ${written}/${maps.size} source maps`);
 }
 
-// Chrome writes {"traceEvents":[...],"metadata":{...}}. The last bytes are held back so
-// source maps can be spliced into metadata before the closing braces.
+/**
+ * Stream the trace to `file`. Chrome writes `{"traceEvents":[...],"metadata":{...}}`; the last
+ * bytes are held back so source maps can be spliced into `metadata.sourceMaps` before the
+ * closing braces. Warns if the file is too big for DevTools to load.
+ *
+ * @param {string} handle CDP stream from `Tracing.tracingComplete`
+ * @param {string} file
+ * @param {Map<string, string>} [maps] source maps to embed
+ */
 async function save(handle, file, maps) {
   const out = createWriteStream(file);
   let tail = Buffer.alloc(0);
@@ -338,6 +415,12 @@ async function save(handle, file, maps) {
   }
 }
 
+/**
+ * Record one trace: start tracing (with CPU throttling if set), wait for `stopped`,
+ * then save to `--out` or `./trace-<timestamp>.json`.
+ *
+ * @param {() => Promise<unknown>} stopped resolves when recording should stop
+ */
 async function record(stopped) {
   const categories = [
     ...CORE,
