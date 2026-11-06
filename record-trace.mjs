@@ -9,7 +9,7 @@ import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 
-const INSTALL = "cd ~/.cache/puppeteer && npx -y @puppeteer/browsers install chrome@canary";
+const INSTALL = "mkdir -p ~/.cache/puppeteer && cd ~/.cache/puppeteer && npx -y @puppeteer/browsers install chrome@canary";
 
 const USAGE = `Record a Chrome DevTools Performance trace, streamed to disk.
 
