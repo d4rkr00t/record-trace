@@ -31,19 +31,22 @@ npx record-trace --url https://example.com --throttle 4 --out load.json   # page
 npx record-trace --headless --scenario ./type-text.mjs --lean           # scripted interaction
 ```
 
-| Option               |                                                                                                            |
-| -------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `--tab <text>`       | Record the tab whose URL or title contains `text` (default: the first tab)                                 |
-| `--seconds <n>`      | Stop after `n` seconds (otherwise stop on SIGINT/SIGTERM)                                                  |
-| `--url <url>`        | Navigate the tab and wait for load before recording                                                        |
-| `--scenario <file>`  | Run a CDP script while recording; recording stops when it resolves (see below)                             |
-| `--init-script <js>` | Run in every frame before page scripts (`Page.addScriptToEvaluateOnNewDocument`)                           |
-| `--throttle <n>`     | Throttle the CPU by `n`× while recording                                                                   |
-| `--source-maps`      | Embed source maps into the trace metadata (fetched with the page's cookies)                                |
-| `--selector-stats`   | Include CSS selector stats                                                                                 |
-| `--lean`             | Skip script sources and screenshots, for a much smaller trace. Metrics and the CPU profile are unaffected. |
-| `--out <file>`       | Output path                                                                                                |
-| anything else        | Passed to Chrome, e.g. `--headless`                                                                        |
+| Option                |                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `--tab <text>`        | Record the tab whose URL or title contains `text` (default: the first tab)                                 |
+| `--seconds <n>`       | Stop after `n` seconds (otherwise stop on SIGINT/SIGTERM)                                                  |
+| `--url <url>`         | Navigate the tab and wait for load before recording                                                        |
+| `--scenario <file>`   | Run a CDP script while recording; recording stops when it resolves (see below)                             |
+| `--init-script <js>`  | Run in every frame before page scripts (`Page.addScriptToEvaluateOnNewDocument`)                           |
+| `--throttle <n>`      | Throttle the CPU by `n`× while recording                                                                   |
+| `--source-maps`       | Embed source maps into the trace metadata (fetched with the page's cookies)                                |
+| `--selector-stats`    | Include CSS selector stats                                                                                 |
+| `--lean`              | Skip script sources and screenshots, for a much smaller trace. Metrics and the CPU profile are unaffected. |
+| `--out <file>`        | Output path                                                                                                |
+| `--no-trace`          | Drive the browser without recording. If it launched Chrome, keeps it up until SIGINT/SIGTERM               |
+| `--eval <js>`         | Evaluate in the tab (promises awaited), print the result as JSON, exit. Implies `--no-trace`               |
+| `--screenshot <file>` | Save a PNG of the tab, exit. Implies `--no-trace`                                                          |
+| anything else         | Passed to Chrome, e.g. `--headless`                                                                        |
 
 | Env       | Default                                                                   |
 | --------- | ------------------------------------------------------------------------- |
@@ -69,6 +72,18 @@ export default async ({ send, waitFor }) => {
 ```
 
 `send(method, params)` sends a CDP command to the tab. `waitFor(eventName)` resolves with the params of the next event with that name.
+
+### Driving the browser step by step
+
+Keep Chrome up, then run one-shot commands against it. Each attaches, acts on the tab, and exits, leaving Chrome running:
+
+```sh
+npx record-trace --no-trace --headless &
+npx record-trace --no-trace --url https://example.com
+npx record-trace --eval 'document.title'
+npx record-trace --eval 'document.querySelector("a").click()'
+npx record-trace --screenshot page.png
+```
 
 ### Sharing the browser
 

@@ -40,6 +40,26 @@ const record = async (...extra) => {
   return JSON.parse(readFileSync(out, "utf8"));
 };
 
+const drive = async (...extra) => {
+  const dir = mkdtempSync(join(tmpdir(), "record-trace-"));
+  const { stdout } = await promisify(execFile)(
+    "node",
+    [
+      CLI,
+      "--headless",
+      "--url",
+      "data:text/html,<h1>hi</h1>",
+      ...extra.map((a) => a.replace("$DIR", dir)),
+    ],
+    {
+      cwd: dir,
+      env: { ...process.env, PORT: "9333", PROFILE: join(dir, "profile") },
+      timeout: 60_000,
+    },
+  );
+  return { dir, stdout };
+};
+
 describe("record-trace", { skip: !hasChrome && "Chrome for Testing not installed" }, () => {
   it("should write a trace DevTools can load", async () => {
     const trace = await record();
@@ -49,5 +69,17 @@ describe("record-trace", { skip: !hasChrome && "Chrome for Testing not installed
   it("should embed a sourceMaps array into metadata with --source-maps", async () => {
     const trace = await record("--source-maps");
     assert.ok(Array.isArray(trace.metadata.sourceMaps));
+  });
+
+  it("should print the --eval result as JSON without writing a trace", async () => {
+    const { dir, stdout } = await drive("--eval", 'document.querySelector("h1").textContent');
+    assert.match(stdout, /^"hi"$/m);
+    assert.deepEqual(globSync("trace-*.json", { cwd: dir }), []);
+  });
+
+  it("should save a PNG with --screenshot", async () => {
+    const { dir } = await drive("--screenshot", "$DIR/shot.png");
+    const png = readFileSync(join(dir, "shot.png"));
+    assert.equal(png.subarray(1, 4).toString(), "PNG");
   });
 });

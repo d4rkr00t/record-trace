@@ -2,14 +2,15 @@
 // Record Chrome DevTools Performance traces over CDP, streamed to disk. See README.md.
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { createWriteStream, globSync, mkdirSync } from "node:fs";
+import { createWriteStream, globSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 
-const INSTALL = "mkdir -p ~/.cache/puppeteer && cd ~/.cache/puppeteer && npx -y @puppeteer/browsers install chrome@canary";
+const INSTALL =
+  "mkdir -p ~/.cache/puppeteer && cd ~/.cache/puppeteer && npx -y @puppeteer/browsers install chrome@canary";
 
 const USAGE = `Record a Chrome DevTools Performance trace, streamed to disk.
 
@@ -28,6 +29,9 @@ Options:
   --selector-stats    include CSS selector stats
   --lean              skip script sources and screenshots (much smaller, metrics unaffected)
   --out <file>        output path (default ./trace-<timestamp>.json)
+  --no-trace          drive the browser without recording; if it launched Chrome, keeps it up until SIGINT
+  --eval <js>         evaluate in the tab, print the result as JSON, exit (implies --no-trace)
+  --screenshot <file> save a PNG of the tab, exit (implies --no-trace)
   -h, --help          show this help
   Any other argument is passed to Chrome (e.g. --headless).
 
@@ -84,6 +88,9 @@ const OPTIONS = {
   "source-maps": { type: "boolean" },
   "selector-stats": { type: "boolean" },
   lean: { type: "boolean" },
+  "no-trace": { type: "boolean" },
+  eval: { type: "string" },
+  screenshot: { type: "string" },
   help: { type: "boolean", short: "h" },
 };
 const TOGGLES = {
@@ -167,11 +174,12 @@ function findChrome() {
  * A spawned Chrome is killed when this process exits, and this process exits when Chrome does.
  *
  * @param {string[]} chromeArgs extra flags for a spawned Chrome
+ * @returns {Promise<boolean | undefined>} true if attached to an existing Chrome
  */
 async function launchOrAttach(chromeArgs) {
   if (await isUp()) {
     console.log(`Attached to Chrome already running on port ${PORT} (left running on exit)`);
-    return;
+    return true;
   }
   const bin = findChrome();
   if (!bin) fail(`Chrome for Testing not found. Install: ${INSTALL}`);
@@ -302,7 +310,7 @@ async function connect(wsUrl) {
  * @param {(chunk: Buffer) => unknown} onChunk awaited before the next read
  */
 async function readStream(handle, onChunk) {
-  for (let eof = false; !eof;) {
+  for (let eof = false; !eof; ) {
     const res = await cdp.send("IO.read", { handle, size: 1 << 20 });
     await onChunk(Buffer.from(res.data, res.base64Encoded ? "base64" : "utf8"));
     eof = res.eof;
@@ -522,9 +530,13 @@ if (opts.help) {
   console.log(USAGE);
   process.exit(0);
 }
-const interactive = !["tab", "seconds", "url", "scenario"].some((k) => opts[k] !== undefined);
+const interactive = !["tab", "seconds", "url", "scenario", "no-trace", "eval", "screenshot"].some(
+  (k) => opts[k] !== undefined,
+);
+const oneShot = opts.eval !== undefined || opts.screenshot !== undefined;
+const run = opts["no-trace"] || oneShot ? (stopped) => stopped() : record;
 
-await launchOrAttach(chromeArgs);
+const attached = await launchOrAttach(chromeArgs);
 const page = interactive ? await askPage() : await findPage(opts.tab);
 console.log(`Using: ${label(page)}`);
 const cdp = await connect(page.webSocketDebuggerUrl);
@@ -539,14 +551,40 @@ if (opts.url) {
   await loaded;
 }
 
+if (opts.eval !== undefined) {
+  const { result, exceptionDetails } = await cdp.send("Runtime.evaluate", {
+    expression: opts.eval,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  if (exceptionDetails) fail(exceptionDetails.exception?.description ?? exceptionDetails.text);
+  console.log(JSON.stringify(result.value, null, 2));
+}
+if (opts.screenshot) {
+  // Right after a navigation the frame can still be swapping in ("Not attached to an active page").
+  const capture = (tries) =>
+    cdp.send("Page.captureScreenshot", { format: "png" }).catch(async (e) => {
+      if (!tries || !/not attached/i.test(e.message)) throw e;
+      await sleep(200);
+      return capture(tries - 1);
+    });
+  const { data } = await capture(10);
+  mkdirSync(dirname(opts.screenshot), { recursive: true });
+  writeFileSync(opts.screenshot, data, "base64");
+  console.log(`Saved ${opts.screenshot}`);
+}
+// An attached --no-trace run owns no Chrome to keep up, so it exits once --url/--init-script are done.
+if (oneShot || (opts["no-trace"] && attached && !opts.scenario)) process.exit(0);
+
 if (interactive) {
   await recordLoop();
 } else if (opts.scenario) {
   const { default: scenario } = await import(resolve(opts.scenario));
-  console.log(`Recording scenario ${opts.scenario}…`);
-  await record(() => scenario({ send: cdp.send, waitFor: cdp.waitFor }));
+  console.log(`${run === record ? "Recording" : "Running"} scenario ${opts.scenario}…`);
+  await run(() => scenario({ send: cdp.send, waitFor: cdp.waitFor }));
 } else {
-  console.log(`Recording${opts.seconds ? ` for ${opts.seconds}s` : ""}… (SIGINT/SIGTERM to stop)`);
-  await record(() => untilSignal(opts.seconds));
+  const what = run === record ? "Recording" : `Chrome up on port ${PORT}`;
+  console.log(`${what}${opts.seconds ? ` for ${opts.seconds}s` : ""}… (SIGINT/SIGTERM to stop)`);
+  await run(() => untilSignal(opts.seconds));
 }
 process.exit(0);
